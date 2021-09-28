@@ -12,7 +12,7 @@ from dbpn_v1 import Net as DBPNLL
 from dbpn_iterative import Net as DBPNITER
 from data import get_eval_set
 from functools import reduce
-
+import numpy as np
 from scipy.misc import imsave
 import scipy.io as sio
 import time
@@ -20,20 +20,20 @@ import cv2
 
 # Training settings
 parser = argparse.ArgumentParser(description='PyTorch Super Res Example')
-parser.add_argument('--upscale_factor', type=int, default=8, help="super resolution upscale factor")
+parser.add_argument('--upscale_factor', type=int, default=4, help="super resolution upscale factor")
 parser.add_argument('--testBatchSize', type=int, default=1, help='testing batch size')
 parser.add_argument('--gpu_mode', type=bool, default=True)
 parser.add_argument('--self_ensemble', type=bool, default=False)
-parser.add_argument('--chop_forward', type=bool, default=False)
+parser.add_argument('--chop_forward', type=bool, default=True)
 parser.add_argument('--threads', type=int, default=1, help='number of threads for data loader to use')
 parser.add_argument('--seed', type=int, default=123, help='random seed to use. Default=123')
 parser.add_argument('--gpus', default=1, type=int, help='number of gpu')
-parser.add_argument('--input_dir', type=str, default='Input')
+parser.add_argument('--input_dir', type=str, default='./Dataset')
 parser.add_argument('--output', default='Results/', help='Location to save checkpoint models')
-parser.add_argument('--test_dataset', type=str, default='Set5_LR_x8')
+parser.add_argument('--test_dataset', type=str, default='eval/')
 parser.add_argument('--model_type', type=str, default='DBPNLL')
-parser.add_argument('--residual', type=bool, default=False)
-parser.add_argument('--model', default='models/DBPNLL_x8.pth', help='sr pretrained base model')
+parser.add_argument('--residual', type=bool, default=True)
+parser.add_argument('--model', default='weights/s63DBPNLLsorafune_epoch_1899.pth', help='sr pretrained base model')
 
 opt = parser.parse_args()
 
@@ -59,7 +59,7 @@ elif opt.model_type == 'DBPN-RES-MR64-3':
     model = DBPNITER(num_channels=3, base_filter=64,  feat = 256, num_stages=3, scale_factor=opt.upscale_factor) ###D-DBPN
 else:
     model = DBPN(num_channels=3, base_filter=64,  feat = 256, num_stages=7, scale_factor=opt.upscale_factor) ###D-DBPN
-    
+
 if cuda:
     model = torch.nn.DataParallel(model, device_ids=gpus_list)
 
@@ -85,11 +85,11 @@ def eval():
         else:
             if opt.self_ensemble:
                 with torch.no_grad():
-                    prediction = x8_forward(input, model)
+                    prediction = x8_forward(cv_img8input, model)
             else:
                 with torch.no_grad():
                     prediction = model(input)
-                
+
         if opt.residual:
             prediction = prediction + bicubic
 
@@ -98,14 +98,19 @@ def eval():
         save_img(prediction.cpu().data, name[0])
 
 def save_img(img, img_name):
-    save_img = img.squeeze().clamp(0, 1).numpy().transpose(1,2,0)
+    # save_img = img.squeeze().clamp(0, 1).numpy().transpose(1,2,0)
+    save_img = img.squeeze().numpy().transpose(1,2,0)
     # save img
     save_dir=os.path.join(opt.output,opt.test_dataset)
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
-        
-    save_fn = save_dir +'/'+ img_name
-    cv2.imwrite(save_fn, cv2.cvtColor(save_img*255, cv2.COLOR_BGR2RGB),  [cv2.IMWRITE_PNG_COMPRESSION, 0])
+
+    save_fn = save_dir +'/'+ img_name.replace("low","answer")
+    print(save_img.dtype)
+    print(save_img.shape)
+    save_img = (save_img[:,:,:]*255).astype(np.uint8)
+    cv2.imwrite(save_fn, cv2.cvtColor(save_img, cv2.COLOR_BGR2RGB),  [cv2.IMWRITE_PNG_COMPRESSION, 0])
+    # cv2.imwrite(save_fn, save_img*1,  [cv2.IMWRITE_PNG_COMPRESSION, 0])
 
 def x8_forward(img, model, precision='single'):
     def _transform(v, op):
@@ -118,7 +123,7 @@ def x8_forward(img, model, precision='single'):
             tfnp = v2np[:, :, ::-1, :].copy()
         elif op == 'transpose':
             tfnp = v2np.transpose((0, 1, 3, 2)).copy()
-        
+
         ret = torch.Tensor(tfnp).cuda()
 
         if precision == 'half':
@@ -143,11 +148,11 @@ def x8_forward(img, model, precision='single'):
             outputlist[i] = _transform(outputlist[i], 'hflip')
         if (i % 4) % 2 == 1:
             outputlist[i] = _transform(outputlist[i], 'vflip')
-    
+
     output = reduce((lambda x, y: x + y), outputlist) / len(outputlist)
 
     return output
-    
+
 def chop_forward(x, model, scale, shave=8, min_size=80000, nGPUs=opt.gpus):
     b, c, h, w = x.size()
     h_half, w_half = h // 2, w // 2

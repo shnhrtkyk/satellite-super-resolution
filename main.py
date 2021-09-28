@@ -38,7 +38,7 @@ parser.add_argument('--model_type', type=str, default='DBPNLL')
 parser.add_argument('--residual', type=bool, default=True)
 parser.add_argument('--patch_size', type=int, default=128, help='Size of cropped HR image')
 parser.add_argument('--pretrained_sr', default='DBPN_x4.pth', help='sr pretrained base model')
-parser.add_argument('--pretrained', type=bool, default=False)
+parser.add_argument('--pretrained', type=bool, default=True)
 parser.add_argument('--save_folder', default='weights/', help='Location to save checkpoint models')
 parser.add_argument('--prefix', default='sorafune', help='Location to save checkpoint models')
 
@@ -66,7 +66,9 @@ def train(epoch):
             prediction = prediction + bicubic
 
         loss = criterion(prediction, target)
-        loss += SSIM(prediction, target)
+        loss_SSIM = 10.0 * SSIM(prediction, target)
+        loss += loss_SSIM
+        print(loss_SSIM.data)
         t1 = time.time()
         epoch_loss += loss.data
         loss.backward()
